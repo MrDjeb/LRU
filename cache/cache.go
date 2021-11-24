@@ -6,33 +6,35 @@ import (
 	"fmt"
 )
 
-type keyT uint32
-type valueT string
+type KeyT uint32
+type ValueT string
 
 type elem struct {
-	key keyT
-	val valueT
+	key KeyT
+	val ValueT
 }
 
 type Cache struct {
-	Capacity int
-	table    map[keyT]*list.Element
+	сapacity uint16 // range 1..29'999
+	table    map[KeyT]*list.Element
 	queue    *list.List
 }
 
-func NewCache(cap int) (*Cache, error) {
-	if cap <= 0 {
-		return nil, errors.New("capacity must be a natural number")
+// Creates a new Cache with a fixed size in range: 1..29'999
+func NewCache(cap uint16) (*Cache, error) {
+	if cap <= 0 || cap >= 30000 {
+		return nil, errors.New("capacity must be a natural number, less than 30000")
 	}
 	c := &Cache{
-		Capacity: cap,
-		table:    make(map[keyT]*list.Element),
+		сapacity: cap,
+		table:    make(map[KeyT]*list.Element),
 		queue:    list.New(),
 	}
 	return c, nil
 }
 
-func (c *Cache) Put(key keyT, val valueT) {
+// Puts element: {key, value} to Cache
+func (c *Cache) Put(key KeyT, val ValueT) {
 	if element, ok := c.table[key]; ok {
 		c.queue.MoveToFront(element)
 		element.Value.(*elem).val = val
@@ -41,17 +43,14 @@ func (c *Cache) Put(key keyT, val valueT) {
 
 	c.table[key] = c.queue.PushFront(&elem{key, val})
 
-	if c.queue.Len() > c.Capacity {
-		c.RemoveElem(c.queue.Back())
+	if uint16(c.queue.Len()) > c.сapacity {
+		c.removeElem(c.queue.Back())
 	}
 }
 
-func (c *Cache) RemoveElem(element *list.Element) {
-	delete(c.table, element.Value.(*elem).key)
-	c.queue.Remove(element)
-}
-
-func (c *Cache) Get(key keyT) (val valueT, ok bool) {
+// Returns the value by key, true - if the item exists.
+// If the key is not in the Cache - nil, false.
+func (c *Cache) Get(key KeyT) (val ValueT, ok bool) {
 	if element, ok := c.table[key]; ok {
 		c.queue.MoveToFront(element)
 		return element.Value.(*elem).val, true
@@ -59,7 +58,8 @@ func (c *Cache) Get(key keyT) (val valueT, ok bool) {
 	return "", false
 }
 
-func (c *Cache) Desplay() {
+// Displays the contents of the cache.
+func (c *Cache) Display() {
 	str := "{"
 	for e := c.queue.Front(); e != nil; e = e.Next() {
 		str += fmt.Sprintf("{%v: %v}, ", e.Value.(*elem).key, e.Value.(*elem).val)
@@ -67,4 +67,9 @@ func (c *Cache) Desplay() {
 	str = str[:len(str)-2]
 	str += "}"
 	fmt.Println(str)
+}
+
+func (c *Cache) removeElem(element *list.Element) {
+	delete(c.table, element.Value.(*elem).key)
+	c.queue.Remove(element)
 }

@@ -1,5 +1,13 @@
 package main
 
+/*
+	Implement:
+  		* memory cache size,
+  		* TLL,
+  		* testing,
+  		* sync.mutex/sync.semaphore
+*/
+
 import (
 	"github.com/MrDjeb/LRU/cache"
 )
@@ -15,5 +23,5 @@ func main() {
 	c.Get(1)
 	c.Get(3)
 	c.Put(4, "str4")
-	c.Desplay()
+	c.Display()
 }
