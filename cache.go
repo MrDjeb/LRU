@@ -13,8 +13,8 @@ import (
 
 const (
 	DefaultTTL     = 30              //time.Second
-	DefaultMinSize = 1 << 20         // 1Mb
-	DefaultMaxSize = (1 << 20) * 128 // 128Mb
+	DefaultminSize = 1 << 20         // 1Mb
+	DefaultmaxSize = (1 << 20) * 128 // 128Mb
 )
 
 type KeyT uint32
@@ -26,11 +26,11 @@ type elem struct {
 	deadTime int64
 }
 
-func (e *elem) Size() uint32 {
-	size := (uint32(ValueOf(e.key).Type().Size()) + 16) * 2
-	size += uint32(len(e.val))
-	size += 32
-	size += uint32(ValueOf(e.deadTime).Type().Size())
+func (e *elem) size() uint32 {
+	size := uint32((ValueOf(e.key).Type().Size())+16) * 2 // map index key size + map key size
+	size += uint32(len(e.val))                            // map value size
+	size += 32                                            // list.Element size
+	size += uint32(ValueOf(e.deadTime).Type().Size())     // time.Duration size
 	return size
 }
 
@@ -49,24 +49,52 @@ type Cache struct {
 }
 
 // Creates a new Cache.
-// Input free or less argument: TTL, minByteSize, maxByteSize
+//  Input free or less argument: TTL, minBytesize, maxBytesize.
+//  Example:
+//  	c, _ := NewCache(10) set TTL to 10 sec
+//		c, _ := NewCache(10, 512) set TTL to 10 sec, minByteSize to 512 byte
+// 		c, _ := NewCache(10, 512, 1024) set TTL to 10 sec, minByteSize to 512 byte, maxByteSize to 1024 byte
+/*const (
+	DefaultTTL     = 30              //time.Second
+	DefaultminSize = 1 << 20         // 1Mb
+	DefaultmaxSize = (1 << 20) * 128 // 128Mb
+)*/
 func NewCache(param ...uint32) (*Cache, error) {
-	if len(param) > 3 {
+	count := len(param)
+	flagForIndex := 0
+	switch {
+	case count == 1:
+		if param[0] < 5 {
+			return nil, errors.New("TTL is to low. It must be >5")
+		}
+		flagForIndex = 1
+	case count == 2:
+		if param[0] < 5 {
+			return nil, errors.New("TTL is to low. It must be >5")
+		}
+		if param[1] > DefaultmaxSize {
+			return nil, errors.New("minBytesize must be low then DefaultmaxSize")
+		}
+	case count == 3:
+		if param[0] < 5 {
+			return nil, errors.New("TTL is to low. It must be >5")
+		}
+		if param[1] > param[2] {
+			return nil, errors.New("minBytesize must be low then maxBytesize")
+		}
+	case count > 3:
 		return nil, errors.New("number of arguments must be less than 3")
+
 	}
-	param = append(param, DefaultTTL, DefaultMinSize, DefaultMaxSize)
-	fl := 0
-	if len(param) == 1 {
-		fl = 1
-	}
+	param = append(param, DefaultTTL, DefaultminSize, DefaultmaxSize)
 	c := &Cache{
 		table:         make(map[KeyT]*list.Element),
 		queue:         list.New(),
 		ttl:           param[0],
 		checkTTL:      uint32(math.Sqrt(float64(param[0]))),
 		curSize:       0,
-		minSize:       param[1+fl],
-		maxSize:       param[2+len(param)%3],
+		minSize:       param[1+flagForIndex],
+		maxSize:       param[2+count%3],
 		isCollapse:    make(chan bool, 1),
 		isClose:       make(chan bool),
 		closeCollapse: sync.WaitGroup{},
@@ -77,37 +105,49 @@ func NewCache(param ...uint32) (*Cache, error) {
 	return c, nil
 }
 
-// Puts element: {key, value} to Cache
+// Deleted the cache struct.
+//  Use like: defer Cache.Destroy()
+func (c *Cache) Destroy() {
+	if c != nil {
+		c.Lock()
+		if c.isClose != nil {
+			close(c.isClose)
+			c.closeCollapse.Wait()
+			c.isClose = nil
+		}
+		c.Unlock()
+	}
+	c = nil
+}
+
+// Puts element: {key, value} to Cache or update value if key exist.
 func (c *Cache) Put(key KeyT, val ValueT) {
 	c.Lock()
 	defer c.Unlock()
 
 	if e, ok := c.table[key]; ok {
 		c.queue.MoveToFront(e)
-		c.curSize -= e.Value.(*elem).Size()
+		c.curSize -= e.Value.(*elem).size()
 		e.Value.(*elem).val = val
 		e.Value.(*elem).deadTime = time.Now().Add(time.Duration(c.ttl) * time.Second).Unix()
-		c.curSize += e.Value.(*elem).Size()
+		c.curSize += e.Value.(*elem).size()
 	} else {
 		c.table[key] = c.queue.PushFront(&elem{key, val,
 			time.Now().Add(time.Duration(c.ttl) * time.Second).Unix()})
-		c.curSize += c.queue.Front().Value.(*elem).Size()
+		c.curSize += c.queue.Front().Value.(*elem).size()
 		if c.curSize >= c.maxSize {
 			c.isCollapse <- true
 		}
 	}
 }
 
-// Returns the value by key, true - if the item exists.
-// If the key is not in the Cache - nil, false.
+// Returns the value by key, ok = true - if the item exists.
+// If the key is not in the Cache its return nil, false.
 func (c *Cache) Get(key KeyT) (val ValueT, ok bool) {
 	c.Lock()
 	defer c.Unlock()
 
-	if e, ok := c.table[key]; ok {
-		if time.Now().UnixNano() > e.Value.(*elem).deadTime {
-			return "", false
-		}
+	if e, ok := c.table[key]; ok && time.Now().Unix() <= e.Value.(*elem).deadTime {
 		c.queue.MoveToFront(e)
 		e.Value.(*elem).deadTime = time.Now().Add(time.Duration(c.ttl) * time.Second).Unix()
 		return e.Value.(*elem).val, true
@@ -131,25 +171,12 @@ func (c *Cache) Display() {
 	fmt.Println(str)
 }
 
-func (c *Cache) Destroy() {
-	if c != nil {
-		c.Lock()
-		if c.isClose != nil {
-			close(c.isClose)
-			c.closeCollapse.Wait()
-			c.isClose = nil
-		}
-		c.Unlock()
-	}
-	c = nil
-}
-
 func (c *Cache) removeElem(e *list.Element) {
 	c.Lock()
-	c.curSize -= e.Value.(*elem).Size()
+	defer c.Unlock()
+	c.curSize -= e.Value.(*elem).size()
 	delete(c.table, e.Value.(*elem).key)
 	c.queue.Remove(e)
-	c.Unlock()
 }
 
 func (c *Cache) collapse() {
@@ -160,11 +187,12 @@ func (c *Cache) collapse() {
 	for {
 		select {
 		case <-c.isCollapse:
-			for e := c.queue.Back(); c.curSize <= c.maxSize && e != nil; e = e.Prev() {
+			for e := c.queue.Back(); c.curSize >= c.maxSize && e != nil; e = e.Prev() {
 				c.removeElem(e)
 			}
 		case <-timer.C:
-			for e := c.queue.Back(); e != nil && time.Now().Unix() >= e.Value.(*elem).deadTime; e = e.Prev() {
+			for e := c.queue.Back(); e != nil &&
+				time.Now().Unix() >= e.Value.(*elem).deadTime; e = e.Prev() {
 				c.removeElem(e)
 			}
 			runtime.GC()
