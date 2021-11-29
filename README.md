@@ -3,22 +3,32 @@
 
 ***Example:***
 ```Go
-c := NewCache(3) // {}
+package main
 
-c.Put(1, “str1”) // {1: “str1”}
+import (
+	"log"
+	"time"
 
-c.Put(2, “str2”) // {1: “str1”, 2: “str2”}
+	"github.com/MrDjeb/LRU/cache"
+)
 
-c.Put(3, “str3”) // {1: “str1”, 2: “str2”, 3: “str3”}
-
-c.Get(3)
-
-c.Get(2)
-
-c.Get(1)
-
-c.Get(3)
-
-c.Put(4, “str4”) // {1: “str1”, 3: “str2”, 4: “str4”}
+func main() {
+	c, err := cache.NewCache(5)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer c.Destroy()
+	c.Put(1, "str1")
+	c.Put(2, "str2")
+	c.Put(3, "str3")
+	c.Get(3)
+	c.Get(2)
+	c.Get(1)
+	c.Get(3)
+	c.Put(4, "str4")
+	c.Display()
+	time.Sleep(6 * time.Second)
+	c.Display()
+}
 ```
 
